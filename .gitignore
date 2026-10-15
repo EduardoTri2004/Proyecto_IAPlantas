@@ -1,0 +1,28 @@
+cat << 'EOF' > .gitignore
+# Base de datos privada, anotaciones y notebooks
+Fotografías selectas/
+*.json
+*.ipynb
+*.jpg
+*.jpeg
+*.png
+*.tif
+
+# Carpetas de fases intermedias (privacidad de datos procesados)
+Fase 1 Segmentacion/
+Fase 2 Extraccion/
+Fase 3 Modelado/
+
+# Excepción: Permitir todo el contenido de la Fase 4
+!Fase 4 Conteo Final/
+!Fase 4 Conteo Final/**
+
+# Caché de Python y entornos virtuales
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.env
+venv/
+.vscode/
+EOF
