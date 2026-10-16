@@ -30,8 +30,10 @@ graph TD
     B -->|Train: 900 fotos<br/>Recortes RGBA + CLAHE| C[Fase 2: Extracción Hiperdimensional<br/>Fase2_Extraccion.py]
     B -->|Test Ciego: 100 fotos íntegras| F[Fase 4: Inferencia y Conteo Final<br/>Fase4_Conteo_Final.py]
     C -->|157 Características en 15 Familias<br/>CSV Clase 1 ES y Clase 0 NO-ES| D[Fase 3: Modelado Híbrido Deep-Tree<br/>Fase3_Modelado.py]
-    D -->|EmbryoGateFormerV2 + HGB/ExtraTrees<br/>Escalador Yeo-Johnson + Umbral τ*| F
-    F --> G[(Resultados Fase 4<br/>Métricas Test Ciego + CSV 100 Fotos)]
+    D -->|EmbryoGateFormerV2 + HGB/ExtraTrees<br/>Escalador Yeo-Johnson| F
+    B -->|Muestras anotadas para contexto píxel| P[Segmentador Contextual<br/>PixelEmbryoSegmenter]
+    P -->|Mapa de probabilidad por píxel| F
+    F --> G[(Resultados Fase 4<br/>CSV + Visualizaciones + Métricas)]
 ```
 
 ### Descripción Técnica de las Fases
@@ -58,26 +60,32 @@ graph TD
 | **F10** | `Frecuencia_Gabor` | 8 | Respuesta media y desviación estándar isotrópica de un banco de filtros de Gabor ($\sigma \in \{1.5, 3.0\}$, $\lambda \in \{5.0, 10.0\}$, 4 orientaciones $\theta$). |
 | **F11** | `Granulometria_Celular` | 4 | Decaimiento relativo de intensidad luminosa tras aperturas morfológicas elípticas multiescala ($3\times3, 5\times5, 7\times7, 9\times9$). |
 | **F12** | `Densitometria_Optica` | 6 | Densidad óptica por Ley de Beer-Lambert ($OD = -\log_{10}(I/255)$), razón y diferencia de absorción núcleo-periferia, magnitud de gradiente de Sobel y rugosidad Laplaciana. |
-| **F13** | `FitoEspectral_Invariante` | 12 | Cromaticidad pura normalizada, índices botánicos *Excess Green* ($ExG$), *Excess Red* ($ExR$), *Green-Red Vegetation Index* ($GRVI$), índice $NDI_{Lab}$ y razón de croma CIELAB núcleo/periferia. |
-| **F14** | `Coherencia_Frontera_3D` | 14 | Alineación normal $\Vert{}\cos(\theta)\Vert{}$ entre gradiente lumínico y campo de distancia, gradientes entre anillos histológicos (epidermis, córtex, meristemo), correlación de domo 3D, desplazamiento de centroide óptico y 7 momentos de Hu ponderados por densidad óptica. |
+| **F13** | `FitoEspectral_Invariante` | 12 | Cromaticidad pura normalizada, índices botánicos *Excess Green* ($ExG$), *Excess Red* ($ExR$), *Green-Red Vegetation Index* ($GRVI$), índice $\mathrm{NDI}_{\mathrm{Lab}}$ y razón de croma CIELAB núcleo/periferia. |
+| **F14** | `Coherencia_Frontera_3D` | 14 | Alineación normal $\left|\cos(\theta)\right|$$ entre gradiente lumínico y campo de distancia, gradientes entre anillos histológicos (epidermis, córtex, meristemo), correlación de domo 3D, desplazamiento de centroide óptico y 7 momentos de Hu ponderados por densidad óptica. |
 | **F15** | `Tensor_Hessiano_Venacion` | 10 | Autovalores ($\lambda_1, \lambda_2$) de la matriz Hessiana de 2do orden (*blobness* globular frente a nervaduras foliares, *structureness*, traza, determinante, anisotropía), razón interna de Otsu y densidad de bordes. |
 
 #### Fase 3 — Modelado Híbrido e Interpretabilidad por Familias (`Fase3_Modelado.py`)
 * **Prevención de Fuga de Datos y Preprocesamiento:** Agrupa los recortes según su fotografía de origen (`GroupShuffleSplit`, 90% entrenamiento / 10% validación) para garantizar que recortes de una misma hoja no compartan particiones. Aplica transformación paramétrica **Yeo-Johnson** (`PowerTransformer`) con respaldo en `StandardScaler` y acotamiento en $[-10, 10]$.
 * **Arquitectura Neuronal `EmbryoGateFormerV2` (PyTorch):**
-  1. *Tokenizadores Numéricos Periódicos (`PeriodicNumericalTokenizer`):* Codifica cada una de las 15 familias mediante proyecciones de Fourier aprendibles ($\sin/\cos$) y compuertas **SwiGLU** ($d_{model}=64$).
+  1. *Tokenizadores Numéricos Periódicos (`PeriodicNumericalTokenizer`):* Codifica cada una de las 15 familias mediante proyecciones de Fourier aprendibles ($\sin/\cos$) y compuertas **SwiGLU** ($d_{\mathrm{model}}=64$).
   2. *Compuerta de Familia (`Family Gate`):* Módulo *Squeeze-and-Excitation* que pondera dinámicamente la relevancia de cada una de las 15 familias biológicas en cada predicción.
   3. *Fusión Tri-Ruta:* Combina en paralelo una **Ruta Atencional Inter-Familiar** (`TransformerEncoder` de 2 capas, 4 cabezales, token `[CLS]` + *Mean Pooling*), una **Ruta Profunda Residual** (`GatedResidualBlock` GRN) y una **Ruta Polinomial de Cruce Explícito** (`DeepCrossLayerV2` - DCNv2).
-  4. *Cabezal Multi-Sample Dropout:* Promedia 5 ramas paralelas de *Dropout* ($p \in \{0.1, 0.2, 0.3, 0.4, 0.5\}$) entrenadas con **Binary Focal Loss** ($\alpha=0.5, \gamma=2.0, \text{label\_smoothing}=0.02$), **Tabular Mixup** ($\alpha=0.2$) y optimizador `AdamW` con `CosineAnnealingLR` durante 150 épocas.
+  4. *Cabezal Multi-Sample Dropout:* Promedia 5 ramas paralelas de *Dropout* ($p \in \{0.1, 0.2, 0.3, 0.4, 0.5\}$) entrenadas con **Binary Focal Loss** (`alpha=0.5`, `gamma=2.0`, `label_smoothing=0.02`), **Tabular Mixup** ($\alpha=0.2$) y optimizador `AdamW` con `CosineAnnealingLR` durante 150 épocas.
 * **Sinergia Deep-Tree y Calibración:** Combina las probabilidades de `EmbryoGateFormerV2` (**55%**) con una rama experta de árboles (**45%**, conformada por **65% `HistGradientBoostingClassifier`** y **35% `ExtraTreesClassifier`**), calibrando el umbral óptimo de decisión $\tau^*$ que maximiza el F1-Score en validación.
 
-#### Fase 4 — Inferencia en Resolución Nativa y Conteo Automatizado (`Fase4_Conteo_Final.py`)
-Diseñada con protección estricta de memoria RAM (`< 800 MB` en CPU) para sistemas Linux de 16 GB:
-* **Etapa 4A (Test Ciego de Clasificación):** Evalúa el desempeño del modelo sobre los polígonos reales de las 100 imágenes reservadas frente a muestras negativas del explante extraídas fuera de una máscara de exclusión dilatada.
-* **Etapa 4B y Conteo por Detección de Domos (`BotanicalDomeWindowCounter`):**
-  1. *Mapeo Botánico y de Domos Meristemáticos:* Aísla la biomasa total respecto al agar de la caja de Petri mediante croma CIELAB + saturación HSV (Otsu) y resalta los domos embrionarios mediante Diferencia de Gaussianas (**DoG**, $\sigma_1=25, \sigma_2=3$) con penalización de reflejos especulares.
-  2. *Generación Multiescala sin Cortes Rectos:* Propone candidatos orgánicos integrando tres mecanismos: (a) barrido de ventana deslizante en 4 escalas relativas calibradas al $1.45\times$ de los percentiles de entrenamiento —descartando cualquier contorno truncado por los bordes de la ventana—, (b) rebanado por percentiles del mapa de domos (tipo MSER) con separación de conglomerados vía transformada de distancia, y (c) contornos elípticos suaves centrados en los 18 máximos locales de densidad óptica.
-  3. *Supresión de No-Máximos (NMS) y Reporte Final:* Deduplica propuestas ($\text{IoU} > 0.70$), extrae las 157 variables en RAM en resolución nativa y filtra las detecciones positivas aplicando NMS por solapamiento ($\text{IoU} \ge 0.25$, $\text{IoMin} \ge 0.55$) y proximidad de centroides, exportando las métricas globales (Exactitud de Conteo, MAE, RMSE, $R^2$) y el desglose por imagen en `./Fase 4 Conteo Final/reporte_conteo_100_imagenes.csv`.
+#### Fase 4 — Segmentación Contextual, Detección y Conteo (`Fase4_Conteo_Final.py`)
+
+La versión actual combina el clasificador de características por candidato (`EmbryoGateFormerV2` y su rama de árboles) con un segmentador contextual de píxeles y un escáner de contornos en la resolución de trabajo. La extracción de características de cada candidato se ejecuta en paralelo; la inferencia de los modelos se mantiene en CPU.
+
+* **Gestión de recursos y compatibilidad:** limita los hilos de OpenCV y de bibliotecas numéricas, desactiva CUDA y usa hasta la mitad de los núcleos disponibles, con un máximo de seis trabajadores. Incluye un parche de compatibilidad en memoria para llamadas de OpenCV que reciben arreglos `float64`.
+* **`PixelEmbryoSegmenter` — Segmentación contextual por píxel:** construye 12 mapas de características por píxel: luminosidad y cromaticidad relativas, índices `ExG` y `GRVI`, relieve DoG fino y de escala macro, rugosidad local, reflejo especular, distancia al borde del tejido y energía de gradiente. Estima una máscara del tejido vegetal para excluir el agar y entrena un `HistGradientBoostingClassifier` con píxeles positivos dentro de los polígonos anotados y negativos de tejido vegetal y fondo. El clasificador se guarda en `pixel_context_segmenter.pkl` y se reutiliza si ya existe.
+* **`NativeContourEmbryoScanner` — Generación de candidatos:** calcula un mapa de probabilidad contextual sobre cada imagen y propone contornos mediante seis umbrales de probabilidad, segmentación morfológica, separación por `Watershed`, corte de protuberancias marginales y ventanas deslizantes multiescala. Los candidatos se recortan contra la máscara del tejido para evitar incluir el fondo de agar, se filtran por área, dimensiones, circularidad, solidez y probabilidad contextual, y se deduplican antes de extraer descriptores.
+* **Extracción e inferencia híbrida:** para cada candidato se calculan los descriptores con `AdvancedBiologicalExtractor` y se predice con `EmbryoGateFormerV2`. Cuando están disponibles los modelos de árboles, su probabilidad conjunta se forma con `HistGradientBoostingClassifier` (65 %) y `ExtraTreesClassifier` (35 %); esta rama se combina con la red profunda en proporción 55/45.
+* **Fusión final y supresión de duplicados:** `select_final_detections` combina la probabilidad del modelo de candidato (65 %) con la probabilidad contextual del píxel (35 %). Después aplica supresión de no máximos poligonal (NMS), umbrales de solapamiento y proximidad de centroides. La implementación limita el resultado a un máximo de siete detecciones por imagen y conserva una detección de mayor puntuación si ninguna supera el umbral de confianza configurado.
+* **Calibración y evaluación:** calibra el umbral de confianza fusionada usando una muestra de hasta 30 imágenes de validación. La etapa 4A evalúa el reconocimiento de los embriones anotados en las imágenes de prueba; la etapa de conteo compara el número detectado con el conteo real por imagen.
+* **Archivos de salida:** genera `reporte_conteo_100_imagenes.csv` con el nombre de la imagen, candidatos evaluados, conteo real, conteo predicho, error absoluto y error relativo. También guarda visualizaciones anotadas en `visualizaciones_conteo/`, con polígonos reales en verde y detecciones de IA en magenta.
+
+Las métricas finales calculadas incluyen exactitud global de conteo basada en el error absoluto acumulado, porcentaje de imágenes con error de hasta un embrión, MAE, RMSE y coeficiente de determinación \(R^2\). Los valores concretos deben tomarse del reporte producido por la ejecución, no asumirse a partir de la descripción del método.
 
 ---
 
